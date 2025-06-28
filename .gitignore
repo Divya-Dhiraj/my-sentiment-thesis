@@ -1,1 +1,21 @@
+# Python
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Docker
+pg_data/
+
+# Data & Models - NEVER commit large data files to Git
+data/
+*.gguf
+*.csv
+*.parquet
+
+# VS Code
+.vscode/
+
+# Secrets & Environment files
+.env

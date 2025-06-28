@@ -1,0 +1,26 @@
+# For the API
+fastapi
+uvicorn
+
+# For the Agentic AI framework
+langchain
+langchain-openai
+
+langchain-community
+
+# For the databases
+psycopg2-binary
+sqlalchemy
+pgvector
+chromadb-client
+
+# For data handling and embeddings
+pandas
+sentence-transformers
+
+beautifulsoup4
+requests
+
+# For the command-line interface
+typer[all]
+tabulate
