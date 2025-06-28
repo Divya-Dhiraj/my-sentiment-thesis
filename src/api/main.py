@@ -8,7 +8,7 @@ from langchain_community.chat_models import ChatOllama
 from langchain.prompts import PromptTemplate
 
 # Import the tools you created
-from src.tools.custom_tools import financial_data_tool, review_rag_tool, structured_sentiment_analyzer
+from src.tools.custom_tools import financial_data_tool, review_rag_tool, structured_sentiment_analyzer, web_scraper_tool
 
 class QueryRequest(BaseModel):
     query: str
@@ -22,7 +22,7 @@ llm = ChatOllama(
 )
 
 # --- Define the list of tools ---
-tools = [financial_data_tool, review_rag_tool, structured_sentiment_analyzer]
+tools = [financial_data_tool, review_rag_tool, structured_sentiment_analyzer, web_scraper_tool]
 
 # --- IMPROVED PROMPT TEMPLATE ---
 # We've added more explicit instructions for the agent.

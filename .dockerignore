@@ -1,6 +1,9 @@
 # .dockerignore
 .git
 .gitignore
-.venv
 __pycache__
+.venv
+pg_data
 README.md
+*.gguf
+data/

@@ -99,3 +99,19 @@ def structured_sentiment_analyzer(review_text: str) -> str:
         return response.content
     except Exception as e:
         return f"Error during sentiment analysis: {e}"
+
+
+@tool
+def web_scraper_tool(url: str) -> str:
+    """
+    Scrapes a given URL and returns the title of the web page.
+    Use this to get information from live websites. The input must be a valid URL.
+    """
+    print(f"--- WebScraperAgent: Scraping URL: {url} ---")
+    try:
+        # The agent_app container calls the web_scraper container using its service name
+        response = requests.get(f"http://web_scraper:8003/scrape?url={url}")
+        response.raise_for_status()
+        return str(response.json())
+    except Exception as e:
+        return f"Error scraping website: {e}"
