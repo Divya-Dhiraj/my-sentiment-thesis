@@ -37,8 +37,24 @@ def _extract_json_from_response(response_text: str) -> str:
         return match.group(1) if match.group(1) else match.group(2)
     return response_text
 
+# --- THIS IS THE UPGRADED "GROUNDED" HELPER FUNCTION ---
 def get_dates_from_query(query: str) -> dict:
-    """Uses an LLM to extract a start and end date from a natural language query."""
+    """
+    Uses an LLM to extract a start and end date from a natural language query,
+    grounded by the actual date range in the database.
+    """
+    # 1. Find the actual date range from the database to "ground" the LLM
+    try:
+        with engine.connect() as conn:
+            date_range_query = "SELECT MIN(week_start_date) as min_date, MAX(week_start_date) as max_date FROM weekly_performance;"
+            result = conn.execute(text(date_range_query)).fetchone()
+            min_db_date = result.min_date.strftime('%Y-%m-%d') if result and result.min_date else "2024-09-15"
+            max_db_date = result.max_date.strftime('%Y-%m-%d') if result and result.max_date else "2025-09-15"
+    except Exception as db_exc:
+        print(f"Warning: Could not query DB for date range. Using default dates. Error: {db_exc}")
+        min_db_date, max_db_date = "2024-09-15", "2025-09-15"
+
+    # 2. Use the real date range to create a fact-based prompt
     date_parser_llm = ChatOpenAI(
         model="meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
         api_key=os.environ.get("NOVITA_API_KEY"),
@@ -46,17 +62,19 @@ def get_dates_from_query(query: str) -> dict:
         temperature=0,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
-    today = "2025-09-15"
+    
     prompt = f"""
-    Based on the user's query, extract a start_date and end_date.
-    The current date is {today}.
-    - "last 4 months" should be a 4-month period ending on the current date.
-    - If a specific month is mentioned (e.g., "in June 2025"), the range should cover that whole month.
-    - If no date is mentioned, default to the last 3 months from the current date.
-    Respond ONLY with a single, valid JSON object with two keys: "start_date" and "end_date".
-    The format for the dates must be 'YYYY-MM-DD'.
+    Based on the user's query, extract a start_date and end_date in 'YYYY-MM-DD' format.
+    The data available in the database ranges from {min_db_date} to {max_db_date}.
+    The current date is {max_db_date}.
+
+    RULES:
+    - If the user asks for the "entire duration", "all time", "from the beginning", or "since launch", use the full available date range: start_date should be {min_db_date} and end_date should be {max_db_date}.
+    - If the user asks for a specific period like "last 4 months" or "in June 2025", calculate that based on the current date.
+    - If no date is mentioned, default to the last 3 months.
 
     Query: "{query}"
+    Respond ONLY with a single, valid JSON object with "start_date" and "end_date" keys.
     """
     try:
         response = date_parser_llm.invoke(prompt)
@@ -65,8 +83,9 @@ def get_dates_from_query(query: str) -> dict:
         print(f"--- Date Parser LLM extracted: {dates} ---")
         return dates
     except Exception as e:
-        print(f"Warning: Date parsing failed. Defaulting to last 3 months. Error: {e}")
-        return {"start_date": "2025-06-15", "end_date": "2025-09-15"}
+        print(f"Warning: Date parsing failed. Using full date range as fallback. Error: {e}")
+        return {"start_date": min_db_date, "end_date": max_db_date}
+
 
 @tool
 @lru_cache(maxsize=128)
@@ -93,32 +112,30 @@ def financial_data_tool(query: str) -> str:
     """
     print(f"--- PerformanceAgent: Received query: {query} ---")
     try:
-        # ... (Fuzzy matching logic is correct)
         products_df = pd.read_sql_query("SELECT asin, product_name FROM products;", engine)
         product_choices = products_df['product_name'].tolist()
         if not product_choices:
             return "Error: No products found in the database. Please run the ingestion script."
         best_match = process.extractOne(query, product_choices)
         product_name_found, product_id_found = None, None
+        
         if best_match and best_match[1] >= 80:
             product_name_found = best_match[0]
             product_id_found = products_df[products_df['product_name'] == product_name_found]['asin'].iloc[0]
         else:
-            return "Sorry, I couldn't find any relevant data on this product from internal sources..."
+            return "Sorry, I couldn't find any relevant data on this product from internal sources. I will get some information in general from the LLM database."
 
         dates = get_dates_from_query(query)
         start_date, end_date = dates['start_date'], dates['end_date']
         print(f"--- PerformanceAgent: Matched '{query}' to '{product_name_found}' (ASIN: {product_id_found}), Date Range: {start_date} to {end_date} ---")
 
         with engine.connect() as conn:
-            # --- THIS IS THE CORRECTED SQL QUERY ---
             sql_query = """
                 SELECT week_start_date, total_units_sold, average_selling_price, num_reviews_received, average_rating_new 
                 FROM weekly_performance 
                 WHERE asin = :asin AND week_start_date BETWEEN :start_date AND :end_date
                 ORDER BY week_start_date;
             """
-            # --- END OF CORRECTION ---
             params = {'asin': product_id_found, 'start_date': start_date, 'end_date': end_date}
             data = pd.read_sql_query(text(sql_query), conn, params=params)
         
@@ -132,7 +149,6 @@ def financial_data_tool(query: str) -> str:
         traceback.print_exc()
         return f"Error fetching performance data: {e}"
 
-# --- THIS IS THE CORRECTED FUNCTION ---
 @tool
 def plot_sales_trend(query: str) -> str:
     """Generates a sales trend plot. Uses fuzzy matching to find products."""
@@ -143,8 +159,7 @@ def plot_sales_trend(query: str) -> str:
         if not product_choices:
             return "Error: No products found in the database to plot."
         best_match = process.extractOne(query, product_choices)
-        product_id_found = None
-        product_name_found = None # Initialize here
+        product_id_found, product_name_found = None, None
         
         if best_match and best_match[1] >= 80:
             product_name_found = best_match[0]
@@ -176,7 +191,6 @@ def plot_sales_trend(query: str) -> str:
         plt.grid(True)
         plt.tight_layout()
         
-        # This variable is now guaranteed to be defined before the return statement
         plot_filename = f"{product_id_found}_sales_trend.png"
         plt.savefig(f"/app/{plot_filename}")
         
@@ -223,8 +237,7 @@ def web_search_tool(query: str) -> str:
         formatted_results = []
         for i, res in enumerate(results['results']):
             content = res.get('content', 'No content available.')
-            if content is None:
-                content = 'No content available.'
+            if content is None: content = 'No content available.'
             formatted_results.append(
                 f"Result {i+1}:\n"
                 f"  Title: {res.get('title', 'N/A')}\n"
