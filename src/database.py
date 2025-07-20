@@ -1,62 +1,71 @@
 # src/database.py
 from dotenv import load_dotenv
-import psycopg2
 import os
+from sqlalchemy import create_engine, text
 
-load_dotenv() # This loads variables from the .env file
-def get_db_connection():
-    """Establishes and returns a connection to the PostgreSQL database."""
-    # This gets the database URL from the environment variables set in docker-compose
+load_dotenv()
+
+def get_db_engine():
+    """Establishes and returns a SQLAlchemy engine for the PostgreSQL database."""
     db_url = os.environ.get("DATABASE_URL")
-    return psycopg2.connect(db_url)
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is not set.")
+    
+    # SQLAlchemy requires the format postgresql+psycopg2://...
+    sqlalchemy_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+    return create_engine(sqlalchemy_url)
+
+# Create a single, reusable engine for the application
+engine = get_db_engine()
 
 def create_tables():
-    """Connects to PostgreSQL and creates the necessary tables for the thesis project."""
-    conn = None
+    """Connects via the engine and creates the necessary tables and indexes."""
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        print("Creating database tables...")
-        
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        with engine.connect() as conn:
+            print("Creating database tables and indexes...")
+            
+            # Use text() to wrap raw SQL for SQLAlchemy
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
 
-        # Table for product specifications
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            product_id VARCHAR(255) PRIMARY KEY,
-            product_name TEXT,
-            category VARCHAR(255)
-        );""")
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS products (
+                asin VARCHAR(255) PRIMARY KEY,
+                product_name TEXT,
+                product_type VARCHAR(255)
+            );"""))
+            
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                review_id VARCHAR(255) PRIMARY KEY,
+                asin VARCHAR(255) REFERENCES products(asin),
+                review_date TIMESTAMP,
+                rating INT,
+                review_title TEXT,
+                review_text TEXT,
+                embedding vector(1024)
+            );"""))
 
-        # Table for customer reviews
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            review_id VARCHAR(255) PRIMARY KEY,
-            product_id VARCHAR(255) REFERENCES products(product_id),
-            review_text TEXT,
-            embedding vector(1024)
-        );""")
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS weekly_performance (
+                record_id SERIAL PRIMARY KEY,
+                asin VARCHAR(255) REFERENCES products(asin),
+                week_start_date DATE,
+                average_selling_price FLOAT,
+                discount_percentage FLOAT,
+                total_units_sold INT,
+                num_reviews_received INT,
+                average_rating_new FLOAT,
+                sentiment_score_new FLOAT
+            );"""))
 
-        # --- ADD THIS NEW BLOCK ---
-        # Table for financial data
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS financials (
-            record_id SERIAL PRIMARY KEY,
-            product_id VARCHAR(255) REFERENCES products(product_id),
-            date DATE,
-            price FLOAT,
-            sales_units INT,
-            supplier_cost FLOAT
-        );
-        """)
-        # --- END OF NEW BLOCK ---
-        
-        conn.commit()
-        cur.close()
-        print("✅ Tables 'products', 'reviews', and 'financials' created successfully in PostgreSQL.")
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_reviews_asin ON reviews (asin);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_reviews_review_date ON reviews (review_date);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_asin ON weekly_performance (asin);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_week_start_date ON weekly_performance (week_start_date);"))
+            
+            conn.commit() # Commit the transaction
+
+        print("✅ Tables and indexes created successfully.")
 
     except Exception as e:
         print(f"❌ An error occurred during table creation: {e}")
-    finally:
-        if conn is not None:
-            conn.close()

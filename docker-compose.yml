@@ -49,7 +49,18 @@ services:
     volumes:
       - ./src:/app/src
       - ./run.py:/app/run.py
+      - ./data_generator_service/final_generated_data:/app/data
     # --- END OF FIX ---
+
+      # --- THIS IS THE NEW SERVICE FOR THE CHAT INTERFACE ---
+  frontend:
+    build: ./frontend
+    container_name: thesis_frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    depends_on:
+      - agent_app # Ensures the backend is ready before the frontend starts
 
 volumes:
   pg_data:

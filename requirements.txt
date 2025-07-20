@@ -1,36 +1,33 @@
-# For the API
+# requirements.txt
+
+# --- Core & API ---
 fastapi
 uvicorn
+python-dotenv
+typer
 
-# For the Agentic AI framework
+# --- LangChain Stack ---
 langchain
-langchain-openai
-openai>=1.0.0
-
-
 langchain-community
-
-# For the databases
-psycopg2-binary
-sqlalchemy
-pgvector
-chromadb-client
-
-# For data handling and embeddings
-pandas
-sentence-transformers
-
-beautifulsoup4
-requests
-
-# For the command-line interface
-typer[all]
-tabulate
-matplotlib
-
-# For Google Cloud Vertex AI
-google-cloud-aiplatform
-langchain-google-vertexai
-
-# For Web Search
+langchain-openai
+openai
 tavily-python
+
+# --- Data & DB ---
+pandas
+SQLAlchemy
+psycopg2-binary
+pgvector
+chromadb
+
+# --- AI & ML ---
+sentence-transformers
+thefuzz[speedup]
+
+# --- Web Scraping ---
+requests
+beautifulsoup4
+
+# --- Visualization ---
+matplotlib
+tabulate
