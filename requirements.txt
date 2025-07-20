@@ -5,6 +5,8 @@ uvicorn
 # For the Agentic AI framework
 langchain
 langchain-openai
+openai>=1.0.0
+
 
 langchain-community
 
@@ -24,3 +26,11 @@ requests
 # For the command-line interface
 typer[all]
 tabulate
+matplotlib
+
+# For Google Cloud Vertex AI
+google-cloud-aiplatform
+langchain-google-vertexai
+
+# For Web Search
+tavily-python

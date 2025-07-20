@@ -1,8 +1,5 @@
 # docker-compose.yml
-version: '3.8'
-
 services:
-  # 1. Database for structured data (financials, etc.)
   postgres:
     image: ankane/pgvector
     container_name: thesis_postgres
@@ -16,7 +13,6 @@ services:
     ports:
       - "5432:5432"
 
-  # 2. Vector database for RAG (reviews, scraped content)
   chroma:
     image: chromadb/chroma
     container_name: thesis_chroma
@@ -24,25 +20,36 @@ services:
     ports:
       - "8000:8000"
 
-  # 3. The main multi-agent application
+  web_scraper:
+    build: ./web_scraper
+    container_name: thesis_scraper
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+
   agent_app:
-    build: . # This tells it to build using the Dockerfile in the current directory
+    build: .
     container_name: thesis_agents
     restart: unless-stopped
     depends_on:
       - postgres
       - chroma
+      - web_scraper
     ports:
-      - "8001:8001" # The API inside the container runs on 8001
+      - "8001:8001"
+    # --- THIS IS THE CRUCIAL FIX ---
+    # This line tells this specific service to load the .env file
+    env_file:
+      - .env
+
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/thesisdb
       - CHROMA_HOST=chroma
-      - CHROMA_PORT=8000
-      # This special URL lets the container talk to the Ollama server on your host machine
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      # You will need to get a free API key from https://tavily.com for the search tool
-      - TAVILY_API_KEY=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
+
+    volumes:
+      - ./src:/app/src
+      - ./run.py:/app/run.py
+    # --- END OF FIX ---
 
 volumes:
-  # This makes sure your postgres data is saved securely
   pg_data:
