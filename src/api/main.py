@@ -46,7 +46,7 @@ def get_agent_for_session(session_id: str):
     
     tools = [financial_data_tool, review_rag_tool, structured_sentiment_analyzer, browse_website_tool, plot_sales_trend, web_search_tool, extract_web_data_tool]
 
-    # --- THIS IS THE FINAL, UPGRADED PROMPT ---
+    # --- THIS PROMPT HAS THE CORRECTED SECTION ORDER ---
     prompt = PromptTemplate.from_template("""
     You are a world-class Senior Business Intelligence Analyst. Your primary mission is to provide actionable insights by deeply analyzing our internal business data. Your greatest strength is correlating financial performance with customer sentiment to uncover the "why" behind the "what".
 
@@ -57,28 +57,37 @@ def get_agent_for_session(session_id: str):
 
     **TOOL USAGE STRATEGY:**
 
-    * **Primary Tools (Use these first for most queries):**
-        * `financial_data_tool`: Use this to get sales, pricing, and performance metrics for a specific product and time frame.
-        * `review_rag_tool`: Use this to get relevant customer reviews to understand sentiment and feedback.
-
+    * **Primary Tools (Use these first for most queries):** `financial_data_tool`, `review_rag_tool`
     * **Secondary/On-Demand Tools (Use ONLY when explicitly asked):**
-        * `plot_sales_trend`: Use this **only if the user's query contains words like "plot", "graph", "chart", "visualize", or "trend".** The tool saves an image file; you cannot see or analyze it. Simply report that the file was saved successfully.
-        * `web_search_tool`, `browse_website_tool`, `extract_web_data_tool`: Use these **only if the user explicitly asks for "competitor prices", "market comparison", "current price on Amazon/BestBuy", or for external information like news.** Do not use these for general product performance questions.
+        * `plot_sales_trend`: Use only for "plot", "graph", "chart", "visualize". Report that the file was saved.
+        * `web_search_tool`, `browse_website_tool`, `extract_web_data_tool`: Use only for "competitor prices", "market comparison", or external news.
+    * **General Knowledge Fallback:** If a tool can't find a product or if the query is general (e.g., "What is a KPI?"), answer from your base knowledge.
 
-    * **General Knowledge Fallback:**
-        * If a tool returns that it cannot find the product, or if the user asks a general knowledge question (e.g., "What is a KPI?"), answer directly from your base knowledge without using tools.
+    **TOOLS:**
+    ------
+    You have access to the following tools:
+    {tools}
 
-    **RESPONSE FORMAT:**
-    For all data-driven answers, you MUST structure your final response in the specified markdown format below, including the source tags.
+    **RESPONSE FORMAT & THOUGHT PROCESS:**
+    Use the following format. For data-driven answers, you MUST structure your final response in the specified markdown format below, including the source tags.
+
+    Question: The user's original input question
+    Thought: Your reasoning on what to do next to answer the question.
+    Action: The name of the tool to use, which must be one of [{tool_names}]
+    Action Input: The simple input for the chosen tool.
+    Observation: The result returned from the tool.
+    ... (this Thought/Action/Action Input/Observation can repeat)
+    Thought: I have now gathered all the necessary information and will format it according to the response instructions.
+    Final Answer: [Your final, structured answer formatted EXACTLY as instructed below]
 
     ---
     **## 📈 Financial KPIs**
-    * **Sales Performance:** [Summarize sales performance for the period and add `(Source: Internal Database)`.]
+    * **Sales Performance:** [Summarize sales performance and add `(Source: Internal Database)`.]
     * **Pricing & Discounting:** [State the average selling price and add `(Source: Internal Database)`.]
     * **Key Metric:** [Calculate a key metric, e.g., "Total Revenue: $Z `(Source: Internal Database)`."]
 
     **## 💬 Customer Sentiment**
-    * **Overall Rating:** [State the average review rating for the period and add `(Source: Internal Database)`.]
+    * **Overall Rating:** [State the average review rating and add `(Source: Internal Database)`.]
     * **Positive Themes:** [List 1-2 key features customers are praising and add `(Source: Internal Reviews)`.]
     * **Negative Themes:** [List 1-2 key issues customers are complaining about and add `(Source: Internal Reviews)`.]
 
@@ -87,12 +96,16 @@ def get_agent_for_session(session_id: str):
     * **Business Recommendation:** [Provide a clear, actionable suggestion based on the analysis.]
     ---
 
-    **BEGIN THOUGHT PROCESS:**
+    **BEGIN!**
+
+    CONVERSATION HISTORY:
+    ---------------------
+    {chat_history}
 
     Question: {input}
     Thought:{agent_scratchpad}
     """)
-
+    
     partial_prompt = prompt.partial(product_context=product_context)
     
     agent = create_react_agent(llm, tools, partial_prompt)
@@ -118,13 +131,7 @@ async def ask_master_agent(request: QueryRequest):
     
     try:
         agent_executor = get_agent_for_session(session_id)
-        
-        # --- THIS IS THE CORRECTED CODE ---
-        # You only need to pass the "input". The agent's memory component
-        # will automatically handle the "chat_history".
         response = await agent_executor.ainvoke({"input": request.query})
-        # --- END OF CORRECTION ---
-        
         return {"response": response.get("output"), "session_id": session_id}
         
     except Exception as e:

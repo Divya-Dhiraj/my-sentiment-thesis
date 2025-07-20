@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y build-essential libpq-dev
 # Copy ONLY the requirements file first to optimize caching
 COPY requirements.txt .
 
-# This layer will be cached as long as requirements.txt doesn't change
-RUN pip install --no-cache-dir -r requirements.txt
+# --- THIS IS THE UPDATED LINE ---
+# This uses a persistent cache for pip downloads, making re-installation much faster.
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-cache-dir -r requirements.txt
+# --- END OF UPDATE ---
 
 # Create a data directory inside the container for any temporary files
 RUN mkdir -p /app/data

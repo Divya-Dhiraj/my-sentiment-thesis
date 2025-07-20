@@ -37,22 +37,20 @@ services:
       - web_scraper
     ports:
       - "8001:8001"
-    # --- THIS IS THE CRUCIAL FIX ---
-    # This line tells this specific service to load the .env file
     env_file:
       - .env
-
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/thesisdb
       - CHROMA_HOST=chroma
-
+      # --- THIS IS THE FIX ---
+      # Explicitly define the port for the container's environment
+      - CHROMA_PORT=8000
     volumes:
       - ./src:/app/src
       - ./run.py:/app/run.py
       - ./data_generator_service/final_generated_data:/app/data
-    # --- END OF FIX ---
 
-      # --- THIS IS THE NEW SERVICE FOR THE CHAT INTERFACE ---
+  # --- THIS IS THE NEW SERVICE FOR THE CHAT INTERFACE ---
   frontend:
     build: ./frontend
     container_name: thesis_frontend
@@ -62,5 +60,7 @@ services:
     depends_on:
       - agent_app # Ensures the backend is ready before the frontend starts
 
+# This key is at the root of the file (no indentation)
 volumes:
+  # The name of the volume is indented once
   pg_data:
