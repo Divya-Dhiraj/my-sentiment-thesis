@@ -1,3 +1,4 @@
+#generate_data.py
 import os
 import pandas as pd
 from faker import Faker

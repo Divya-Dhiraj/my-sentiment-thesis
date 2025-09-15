@@ -1,19 +1,21 @@
 # run.py
 import typer
 import uvicorn
-from src.pipelines import ingestion
 
-# Create the Typer app
+# --- THE FIX: Make the import path specific and point to the correct script ---
+from src.pipelines import ingest_real_data
+
 app = typer.Typer()
 
 @app.command()
 def ingest_data():
     """
-    Runs the data ingestion pipeline to read data, create embeddings,
+    Runs the data ingestion pipeline to read the real data, create the schema,
     and populate the databases.
     """
-    typer.echo("Executing data ingestion pipeline...")
-    ingestion.run()
+    typer.echo("Executing the business data ingestion pipeline...")
+    # --- THE FIX: Call the correct script's run function ---
+    ingest_real_data.run()
     typer.echo("✅ Ingestion complete.")
 
 @app.command()

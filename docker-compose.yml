@@ -48,7 +48,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./run.py:/app/run.py
-      - ./data_generator_service/final_generated_data:/app/data
+      - ./data:/app/data
 
   # --- THIS IS THE NEW SERVICE FOR THE CHAT INTERFACE ---
   frontend:

@@ -11,7 +11,6 @@ def get_db_engine():
     if not db_url:
         raise ValueError("DATABASE_URL environment variable is not set.")
     
-    # SQLAlchemy requires the format postgresql+psycopg2://...
     sqlalchemy_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
     return create_engine(sqlalchemy_url)
 
@@ -19,53 +18,57 @@ def get_db_engine():
 engine = get_db_engine()
 
 def create_tables():
-    """Connects via the engine and creates the necessary tables and indexes."""
+    """Connects via the engine and ensures the correct tables exist by dropping old ones first."""
     try:
         with engine.connect() as conn:
-            print("Creating database tables and indexes...")
+            print("Ensuring fresh database tables...")
             
-            # Use text() to wrap raw SQL for SQLAlchemy
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            # --- THE FIX: Drop existing tables to ensure a clean slate ---
+            # CASCADE ensures that any dependent objects (like indexes) are also dropped.
+            conn.execute(text("DROP TABLE IF EXISTS concessions CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS weekly_performance CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS products CASCADE;"))
 
+            # Now, create the tables with the correct, up-to-date schema
+            print("Creating tables with the correct schema...")
+
+            # Table 1: Products
             conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS products (
+            CREATE TABLE products (
                 asin VARCHAR(255) PRIMARY KEY,
                 product_name TEXT,
                 product_type VARCHAR(255)
             );"""))
             
+            # Table 2: Weekly Performance
             conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS reviews (
-                review_id VARCHAR(255) PRIMARY KEY,
-                asin VARCHAR(255) REFERENCES products(asin),
-                review_date TIMESTAMP,
-                rating INT,
-                review_title TEXT,
-                review_text TEXT,
-                embedding vector(1024)
-            );"""))
-
-            conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS weekly_performance (
+            CREATE TABLE weekly_performance (
                 record_id SERIAL PRIMARY KEY,
-                asin VARCHAR(255) REFERENCES products(asin),
+                asin VARCHAR(255) REFERENCES products(asin) ON DELETE CASCADE,
                 week_start_date DATE,
-                average_selling_price FLOAT,
-                discount_percentage FLOAT,
                 total_units_sold INT,
-                num_reviews_received INT,
-                average_rating_new FLOAT,
-                sentiment_score_new FLOAT
+                average_selling_price FLOAT,
+                total_units_conceded INT
             );"""))
 
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_reviews_asin ON reviews (asin);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_reviews_review_date ON reviews (review_date);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_asin ON weekly_performance (asin);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_week_start_date ON weekly_performance (week_start_date);"))
-            
-            conn.commit() # Commit the transaction
+            # Table 3: Concessions
+            conn.execute(text("""
+            CREATE TABLE concessions (
+                record_id SERIAL PRIMARY KEY,
+                asin VARCHAR(255) REFERENCES products(asin) ON DELETE CASCADE,
+                ship_day DATE,
+                concession_reason TEXT,
+                defect_category TEXT,
+                root_cause TEXT
+            );"""))
 
-        print("✅ Tables and indexes created successfully.")
+            # Create Indexes for faster queries
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_asin_week ON weekly_performance (asin, week_start_date);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_concessions_asin ON concessions (asin);"))
+            
+            conn.commit()
+
+            print("✅ Tables and indexes created successfully.")
 
     except Exception as e:
         print(f"❌ An error occurred during table creation: {e}")
