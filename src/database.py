@@ -23,8 +23,7 @@ def create_tables():
         with engine.connect() as conn:
             print("Ensuring fresh database tables...")
             
-            # --- THE FIX: Drop existing tables to ensure a clean slate ---
-            # CASCADE ensures that any dependent objects (like indexes) are also dropped.
+            # Drop existing tables to ensure a clean slate
             conn.execute(text("DROP TABLE IF EXISTS concessions CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS weekly_performance CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS products CASCADE;"))
@@ -32,12 +31,13 @@ def create_tables():
             # Now, create the tables with the correct, up-to-date schema
             print("Creating tables with the correct schema...")
 
-            # Table 1: Products
+            # Table 1: Products (with the new clean_category column)
             conn.execute(text("""
             CREATE TABLE products (
                 asin VARCHAR(255) PRIMARY KEY,
                 product_name TEXT,
-                product_type VARCHAR(255)
+                product_type VARCHAR(255),
+                clean_category VARCHAR(255) 
             );"""))
             
             # Table 2: Weekly Performance
@@ -63,6 +63,7 @@ def create_tables():
             );"""))
 
             # Create Indexes for faster queries
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_products_category ON products (clean_category);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_asin_week ON weekly_performance (asin, week_start_date);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_concessions_asin ON concessions (asin);"))
             

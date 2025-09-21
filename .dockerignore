@@ -14,9 +14,15 @@ __pycache__/
 # IDE / Editor specific
 .vscode/
 .idea/
+.DS_Store
 
 # Test cache
 .pytest_cache/
 
 # Docker ignore file
 .dockerignore
+
+# Test caches and reports
+.pytest_cache/
+htmlcov/
+.coverage

@@ -31,3 +31,7 @@ beautifulsoup4
 # --- Visualization ---
 matplotlib
 tabulate
+
+# --- Evaluation ---
+ragas
+datasets

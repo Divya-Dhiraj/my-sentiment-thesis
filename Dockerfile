@@ -2,13 +2,12 @@
 
 # --- Stage 1: The "Builder" ---
 # This stage installs dependencies into a virtual environment.
-# It uses a full Python image that includes build tools.
 FROM python:3.11-slim as builder
 
 WORKDIR /app
 
 # Install system dependencies needed for building some Python packages
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git
 
 # Create a virtual environment
 RUN python -m venv /opt/venv
@@ -21,7 +20,6 @@ RUN pip install --upgrade pip
 COPY requirements.txt .
 
 # Install the Python dependencies into the virtual environment
-# This layer is cached and only re-runs if requirements.txt changes.
 RUN pip install --no-cache-dir -r requirements.txt
 
 
@@ -29,14 +27,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # This stage creates the slim, final image for running the application.
 FROM python:3.11-slim
 
+# --- THIS IS THE FIX ---
+# Install git in the FINAL image and then clean up the apt cache to reduce image size.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy the virtual environment from the "builder" stage.
-# This is a very fast operation.
 COPY --from=builder /opt/venv /opt/venv
 
 # Copy the application source code.
-# Changing your source code will only invalidate this layer and below.
 COPY ./src /app/src
 COPY run.py .
 
