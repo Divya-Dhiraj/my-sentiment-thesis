@@ -8,14 +8,12 @@ import uuid
 from typing import Optional, List, Dict, Any
 
 from langchain import hub
-from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_community.chat_message_histories import ChatMessageHistory
 
-# Import the decorated tool functions directly
+# Import the baseline set of tools
 from src.tools.sql_agent_tool import sql_query_tool
 from src.tools.semantic_search_tool import semantic_product_search
 from src.tools.analysis_agent_tool import data_analysis_tool
@@ -29,78 +27,60 @@ class QueryRequest(BaseModel):
 app = FastAPI(title="Business Intelligence RAG Agent")
 session_store: Dict[str, ChatMessageHistory] = {}
 
-def create_final_presentation(analysis_json: Dict[str, Any], llm_config: dict) -> Dict[str, Any]:
-    print("--- ✨ PRESENTATION AGENT: Polishing final output... ---")
-    if "No data was provided" in analysis_json.get("analysis_summary", "") or "No data found" in analysis_json.get("analysis_summary", ""):
-        return analysis_json
-        
-    presenter_llm_config = llm_config.copy()
-    presenter_llm_config["temperature"] = 0.1
-    print(f"--- [Presentation Agent] Using LLM config: {presenter_llm_config} ---")
-    
-    presenter_prompt_template = """
-    You are a senior business communications expert. Your job is to take a structured data analysis report (in JSON format)
-    and rewrite the textual parts into a clean, concise, and professional summary for an executive audience.
-    **Instructions:**
-    1.  Read the `analysis_summary`. Rewrite it to be more narrative and less technical. Remove references to "fields", "records", or "data points". Focus on the business meaning.
-    2.  Review the `key_insights` and weave them into your summary naturally.
-    3.  Review the `actionable_recommendations`. Refine the language to be as clear and impactful as possible.
-    4.  Return a JSON object with the polished `analysis_summary` and `actionable_recommendations`.
-    **Data Analysis JSON:**
-    {analysis_json}
-    **Polished JSON Output:**
-    """
-    prompt = ChatPromptTemplate.from_template(presenter_prompt_template)
-    parser = StrOutputParser()
-    
-    presenter_llm = ChatOpenAI(**presenter_llm_config)
-
-    presentation_chain = prompt | presenter_llm | parser
-    response_str = presentation_chain.invoke({"analysis_json": json.dumps(analysis_json, indent=2)})
-    try:
-        polished_text_data = json.loads(response_str)
-        final_presentation = {
-            "analysis_summary": polished_text_data.get("analysis_summary", analysis_json.get("analysis_summary", "")),
-            "actionable_recommendations": polished_text_data.get("actionable_recommendations", []),
-            "key_insights": analysis_json.get("key_insights", []),
-            "data_quality_concerns": analysis_json.get("data_quality_concerns", []),
-            "chart_data": analysis_json.get("chart_data", {})
-        }
-        print("--- ✅ PRESENTATION AGENT: Output polished successfully. ---")
-        return final_presentation
-    except json.JSONDecodeError:
-        print("--- ⚠️ PRESENTATION AGENT: Failed to parse polished JSON, returning original analysis. ---")
-        return analysis_json
-
-# --- SYSTEM PROMPT WITH DATA BUG FIX INSTRUCTION ---
+# --- FINAL & COMPLETE SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
-You are a senior Business Intelligence analyst. Your primary goal is to provide accurate, data-driven answers and proactive insights to help users make informed business decisions.
-You must speak like a professional analyst: be concise, confident, and focus on the business implications of the data.
+# IDENTITY & PERSONA
+You are HORUS, an elite Business Intelligence AI Analyst. Your mission is to transform user questions into precise, data-driven insights and actionable recommendations. You are authoritative, insightful, and always speak to an executive audience.
 
-**ANALYSIS & INSIGHTS RULES:**
-1.  **Data Quality First:** Before answering the user's question, ALWAYS perform a quick sanity check of the data. If you notice anomalies (e.g., return rates over 100%, extremely low sample sizes, missing data), you MUST mention these as "Data Quality Concerns" in your final analysis.
-2.  **Be Proactive:** Don't just answer the question. After providing a direct answer, you MUST suggest 2-3 specific, actionable follow-up questions or analyses that would provide deeper insight.
-3.  **Use Your Tools:** You have access to a suite of tools. Use them efficiently and in the correct sequence to answer questions.
+# DATA DICTIONARY & SEMANTIC MEANING
+This is your comprehensive guide to the database. You MUST use these exact table and column names in your SQL queries.
 
-**ADVANCED RE-RANKING STRATEGY:**
-For complex questions with both semantic (e.g., "popular", "poorly rated") and structured (e.g., "in the 'Laundry Appliance' category", "with sales > 1000") criteria, you MUST use the following three-step process:
-1.  **Step 1: Semantic Search.** Use the `semantic_product_search` tool with the semantic part of the query to get a list of conceptually relevant products.
-2.  **Step 2: SQL Search.** Use the `sql_query_tool` with the structured part of the query to get a list of products that meet the exact criteria.
-3.  **Step 3: Re-rank.** Use the `re_ranker_tool` with the user's original query and the results from BOTH Step 1 and Step 2 to get a final, fused, and intelligently ranked list of products.
-This strategy is crucial for accuracy on complex queries.
+**Table: `products`** - Contains all product-related hierarchy and metadata.
+- `asin` (text): The unique product identifier.
+- `product_name` (text): The generic display name of the product (e.g., "Major Appliances").
+- `gl_product_group` (text): The top-level general ledger group for the product.
+- `gl_name` (text): The business-specific product line name (e.g., "Major Appliances").
+- `subcategory_code` (text): The specific code for the product's sub-category.
+- `subcategory_description` (text): A detailed description of the product's sub-category (e.g., "Washing and Drying Machine accessories").
+- `category` (text): A high-level category for the product (e.g., "Laundry").
+- `manufacturer_name` (text): The name of the product's manufacturer.
+- `product_type` (text): The specific type of product (e.g., "LAUNDRY_APPLIANCE").
+- `asp_band` (text): The Average Selling Price band for the product (e.g., "Low ASP").
 
-**DATABASE SCHEMA HINTS:**
-- The main product identifier is the `asin` column.
-- Sales data is in `weekly_performance` (`total_units_sold`).
-- Return data is in `concessions`. To count total returns for a product, you must `COUNT(*)` from the `concessions` table. **DO NOT SUM `total_units_conceded` from the `weekly_performance` table for return analysis, as this is incorrect.**
-- Return reasons are in `concessions` (`concession_reason`).
-- Product info is in `products` (`product_name`, `clean_category`).
-- Price is `average_selling_price` in `weekly_performance`.
-- ALWAYS use the `sql_query_tool` for specific data, numbers, or aggregations.
+**Table: `weekly_performance`** - Contains weekly aggregated sales data.
+- `asin` (text): Foreign key to `products`.
+- `week_start_date` (date): The Monday of the week for which sales are recorded.
+- `total_units_sold` (integer): The primary sales metric. Use this for all sales volume calculations.
+- `shipped_cogs` (numeric): The total Cost of Goods Sold for units shipped in that week.
+- `product_gms` (numeric): The total Gross Merchandise Sales for that week.
 
-**QUERY STRATEGY HINTS:**
-- Construct single, efficient SQL queries that join tables to get the final answer in one step.
-- To get both sales and return counts, you may need to use subqueries or Common Table Expressions (CTEs) that aggregate from `weekly_performance` and `concessions` separately before joining them on the `asin`.
+**Table: `concessions`** - Contains individual records for customer returns or concessions.
+- `customer_id` (text): The unique identifier for the customer.
+- `asin` (text): Foreign key to `products`.
+- `fulfillment_channel` (text): How the product was shipped (e.g., "FBA" for Fulfilled by Amazon).
+- `concession_creation_day` (date): The date the concession was created.
+- `concession_reason` (text): The specific reason provided for the concession/return.
+- `defect_category` (text): A higher-level category for the reason of the return (e.g., "Fit/Style Issue").
+- `root_cause` (text): The underlying root cause of the return issue (e.g., "Fit/Style").
+- `total_units_conceded` (integer): The number of units conceded in this event.
+- `our_price` (numeric): The price of the item at the time of concession.
+- `marketplace_id` (integer): The sales region. `4` means **Germany**.
+
+**IMPORTANT QUERY RULES:**
+- To get total sales volume, **MUST `SUM(total_units_sold)` from `weekly_performance`.**
+- To get total returns volume, **MUST `SUM(total_units_conceded)` from `concessions`.**
+- There is **NO `region` column**. Use `marketplace_id`.
+
+---
+# CORE WORKFLOW & RESPONSE MODES
+- **MODE 1: FACT RETRIEVAL:** For "What is...", "How many...". Plan: Use `sql_query_tool` once, then answer in one clean sentence. DO NOT use `data_analysis_tool`.
+- **MODE 2: DIAGNOSTIC ANALYSIS:** For "compare", "why", "trends". Plan: Gather data with tools, then MUST pass the final result to `data_analysis_tool`. This is your primary mode.
+
+# DATA PRESENTATION MANDATE
+When a user asks for a "table", "list", "breakdown", "chart", or "graph", you MUST use the `data_analysis_tool`. Ensure you structure the data into the `table_data` or `chart_data` fields in the tool's input. The frontend will render these directly.
+
+- **QUERY REFINEMENT:** If a query is too broad, you MUST halt and propose an aggregated query to the user.
+- **PREPROCESSING:** If a SQL result is large (>5 rows), you MUST use `data_preprocessing_tool` before the next step.
 """
 
 @app.post("/ask_agent", response_model=Dict[str, Any])
@@ -114,33 +94,23 @@ async def ask_agent(request: QueryRequest):
     try:
         print(f"--- [API] Received query for session {session_id}: '{request.query}' ---")
         
-        llm_config = {
-            "model": os.environ.get("OPENAI_MODEL_NAME"),
-            "temperature": 0.0,
-            "stop": None
-        }
-        
-        print(f"--- [API] Initializing main agent LLM with config: {llm_config} ---")
+        llm_config = {"model": os.environ.get("OPENAI_MODEL_NAME"), "temperature": 0.0, "stop": None}
         llm = ChatOpenAI(**llm_config)
-        print("--- [API] LLM Initialized Successfully ---")
         
         tools = [
             semantic_product_search,
             sql_query_tool,
             data_analysis_tool,
             data_preprocessing_tool,
-            re_ranker_tool 
+            re_ranker_tool
         ]
 
         prompt = hub.pull("hwchase17/openai-tools-agent")
-        original_system_template = prompt.messages[0].prompt.template
-        prompt.messages[0].prompt.template = SYSTEM_PROMPT + "\n\n" + original_system_template
+        prompt.messages[0].prompt.template = SYSTEM_PROMPT
         prompt.messages.insert(1, MessagesPlaceholder(variable_name="chat_history"))
         
-        print("--- [API] Creating OpenAI Tools Agent ---")
         agent = create_openai_tools_agent(llm, tools, prompt)
         agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
-        print("--- [API] Agent Executor created successfully ---")
 
         print("--- 🚀 Invoking Tool Calling Agent Executor... ---")
         
@@ -155,17 +125,16 @@ async def ask_agent(request: QueryRequest):
 
         print("--- ✅ Agent execution finished. ---")
         
-        final_analysis_str = response.get("output", "No analysis was generated.")
-        try:
-            if "```json" in final_analysis_str:
-                json_part = final_analysis_str.split("```json")[1].split("```")[0]
-                analysis_json = json.loads(json_part)
-            else:
-                analysis_json = json.loads(final_analysis_str)
-        except (json.JSONDecodeError, TypeError, IndexError):
-            analysis_json = {"analysis_summary": final_analysis_str}
+        final_output_str = response.get("output", "No analysis was generated.")
         
-        final_presentation_data = create_final_presentation(analysis_json, llm_config)
+        final_presentation_data = {}
+        try:
+            analysis_json = json.loads(final_output_str)
+            print("--- [Router] Complex analytical response detected. ---")
+            final_presentation_data = analysis_json
+        except (json.JSONDecodeError, TypeError):
+            print("--- [Router] Simple fact-based response detected. ---")
+            final_presentation_data = {"analysis_summary": final_output_str}
         
         step_details = []
         if "intermediate_steps" in response:
