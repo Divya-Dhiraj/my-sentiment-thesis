@@ -1,28 +1,50 @@
-# Dockerfile
-FROM python:3.11-slim
+# ./Dockerfile
+
+# --- Stage 1: The "Builder" ---
+# This stage installs dependencies into a virtual environment.
+FROM python:3.11-slim as builder
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y build-essential libpq-dev
+# Install system dependencies needed for building some Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git
 
-# Copy ONLY the requirements file first to optimize caching
+# Create a virtual environment
+RUN python -m venv /opt/venv
+
+# Activate the virtual environment and upgrade pip
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip
+
+# Copy ONLY the requirements file
 COPY requirements.txt .
 
-# --- THIS IS THE UPDATED LINE ---
-# This uses a persistent cache for pip downloads, making re-installation much faster.
-RUN --mount=type=cache,target=/root/.cache/pip pip install --no-cache-dir -r requirements.txt
-# --- END OF UPDATE ---
+# Install the Python dependencies into the virtual environment
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create a data directory inside the container for any temporary files
-RUN mkdir -p /app/data
 
-# Copy your project's source code into the container
+# --- Stage 2: The "Final Image" ---
+# This stage creates the slim, final image for running the application.
+FROM python:3.11-slim
+
+# --- THIS IS THE FIX ---
+# Install git in the FINAL image and then clean up the apt cache to reduce image size.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the virtual environment from the "builder" stage.
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy the application source code.
 COPY ./src /app/src
 COPY run.py .
+
+# Activate the virtual environment for all subsequent commands
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Expose the port the API will run on
 EXPOSE 8001
 
-# The default command to run when the container starts
+# The command to run the application using python from the venv
 CMD ["python", "run.py", "start-api"]

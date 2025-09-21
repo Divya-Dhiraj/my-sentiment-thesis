@@ -1,4 +1,3 @@
-# docker-compose.yml
 services:
   postgres:
     image: ankane/pgvector
@@ -19,6 +18,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
 
   web_scraper:
     build: ./web_scraper
@@ -42,15 +43,13 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/thesisdb
       - CHROMA_HOST=chroma
-      # --- THIS IS THE FIX ---
-      # Explicitly define the port for the container's environment
       - CHROMA_PORT=8000
     volumes:
       - ./src:/app/src
       - ./run.py:/app/run.py
-      - ./data_generator_service/final_generated_data:/app/data
+      - ./data:/app/data
+      - ./test:/app/test
 
-  # --- THIS IS THE NEW SERVICE FOR THE CHAT INTERFACE ---
   frontend:
     build: ./frontend
     container_name: thesis_frontend
@@ -58,9 +57,8 @@ services:
     ports:
       - "8501:8501"
     depends_on:
-      - agent_app # Ensures the backend is ready before the frontend starts
+      - agent_app
 
-# This key is at the root of the file (no indentation)
 volumes:
-  # The name of the volume is indented once
   pg_data:
+  chroma_data:

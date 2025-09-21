@@ -1,9 +1,28 @@
-# .dockerignore
+# Git
 .git
 .gitignore
-__pycache__
+
+# Python virtual environment
 .venv
-pg_data
-README.md
-*.gguf
-data/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE / Editor specific
+.vscode/
+.idea/
+.DS_Store
+
+# Test cache
+.pytest_cache/
+
+# Docker ignore file
+.dockerignore
+
+# Test caches and reports
+.pytest_cache/
+htmlcov/
+.coverage

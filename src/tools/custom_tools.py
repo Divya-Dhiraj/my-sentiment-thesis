@@ -1,281 +1,191 @@
+# # src/tools/custom_tools.py
+# import os
+# import re
+# import pandas as pd
+# from functools import lru_cache
+
+# from langchain.agents import tool
+# from sqlalchemy import text
+# from thefuzz import process
+
+# from ..database import engine
+
+# @lru_cache(maxsize=1)
+# def get_all_product_info() -> pd.DataFrame:
+#     """
+#     Fetches all product info from the database, including name and type.
+#     Uses lru_cache to run this query only once.
+#     """
+#     print("--- Caching product list from database for fuzzy matching... ---")
+#     try:
+#         return pd.read_sql_query("SELECT asin, product_name, product_type FROM products;", engine)
+#     except Exception as e:
+#         print(f"Error fetching product info: {e}")
+#         return pd.DataFrame(columns=['asin', 'product_name', 'product_type'])
+
+# def find_product_in_query(query: str) -> dict:
+#     """
+#     Identifies a product's ASIN and name from a query by searching against
+#     both product_name and product_type for a more robust match.
+#     """
+#     products_df = get_all_product_info()
+#     if products_df.empty:
+#         return {"error": "No products found in the database."}
+
+#     asin_match = re.search(r'\b(B[A-Z0-9]{9})\b', query, re.IGNORECASE)
+#     if asin_match:
+#         asin = asin_match.group(0).upper()
+#         match = products_df[products_df['asin'] == asin]
+#         if not match.empty:
+#             return {"asin": asin, "name": match.iloc[0]['product_name']}
+#         else:
+#             return {"error": f"ASIN {asin} was mentioned, but it does not exist in the database."}
+
+#     products_df['search_text'] = products_df['product_name'].fillna('') + " " + products_df['product_type'].fillna('')
+#     product_lookup = {row['search_text']: {'asin': row['asin'], 'name': row['product_name']} for _, row in products_df.iterrows()}
+    
+#     best_match = process.extractOne(query, product_lookup.keys())
+#     if best_match and best_match[1] >= 75:
+#         matched_text = best_match[0]
+#         product_info = product_lookup[matched_text]
+#         print(f"Found fuzzy name match: '{product_info['name']}' (ASIN: {product_info['asin']}) with score {best_match[1]}")
+#         return product_info
+
+#     return {"error": "Could not identify a specific product from your query. Please be more specific or provide an ASIN."}
+
+
+# @tool
+# def query_business_database_tool(query: str) -> str:
+#     """
+#     Answers questions about business performance by querying the internal database.
+#     Use this for any questions related to sales, revenue, returns, or concession reasons.
+#     The tool automatically identifies the product from the query.
+#     """
+#     print(f"--- 🧠 Smart Tool received query: '{query}' ---")
+#     product = find_product_in_query(query)
+#     if "error" in product:
+#         return product["error"]
+    
+#     q_lower = query.lower()
+#     is_sales_query = any(k in q_lower for k in ['sale', 'sold', 'revenue', 'performance', 'price'])
+#     is_concession_query = any(k in q_lower for k in ['return', 'concession', 'defect', 'complaint', 'reason'])
+
+#     if not is_sales_query and not is_concession_query:
+#         is_sales_query = True
+#         is_concession_query = True
+
+#     params = {'asin': product['asin']}
+#     results = [f"📊 Analysis for Product: **{product['name']}** (ASIN: {product['asin']})\n"]
+
+#     try:
+#         with engine.connect() as conn:
+#             if is_sales_query:
+#                 sql = text("""
+#                     SELECT 
+#                         SUM(total_units_sold) as "Total Units Sold",
+#                         TO_CHAR(AVG(average_selling_price), '999,999.00') as "Average Selling Price",
+#                         SUM(total_units_conceded) as "Total Units Conceded"
+#                     FROM weekly_performance
+#                     WHERE asin = :asin
+#                 """)
+#                 sales_data = pd.read_sql(sql, conn, params=params)
+#                 if not sales_data.empty and sales_data.iloc[0]['Total Units Sold'] is not None:
+#                     results.append("### Performance Summary\n" + sales_data.to_markdown(index=False))
+#                 else:
+#                     results.append("No sales data found for this product.")
+
+#             if is_concession_query:
+#                 sql = text("""
+#                     SELECT concession_reason as "Concession Reason", COUNT(*) as "Count"
+#                     FROM concessions
+#                     WHERE asin = :asin
+#                     GROUP BY concession_reason
+#                     ORDER BY "Count" DESC
+#                     LIMIT 5
+#                 """)
+#                 concession_data = pd.read_sql(sql, conn, params=params)
+#                 if not concession_data.empty:
+#                     results.append("\n### Top 5 Concession Reasons\n" + concession_data.to_markdown(index=False))
+#                 else:
+#                     results.append("\nNo concession data found for this product.")
+        
+#         return "\n".join(results)
+
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         return f"An error occurred while querying the database: {e}"
+
+
+
+
+
+
+
+
+
+
+
 # src/tools/custom_tools.py
-import os
-import requests
 import pandas as pd
-import chromadb
-import matplotlib.pyplot as plt
-import json
-import re
-from datetime import datetime
-
+from typing import List
 from langchain.agents import tool
-from langchain_openai import ChatOpenAI
-from sentence_transformers import SentenceTransformer
-from tavily import TavilyClient
-
-from functools import lru_cache
-from chromadb.config import Settings
 from sqlalchemy import text
-from thefuzz import process
+import re
+
 from ..database import engine
 
-# --- Pre-load expensive models ONCE when the app starts ---
-print("--- Pre-loading Sentence Transformer model ---")
-EMBEDDING_MODEL = SentenceTransformer('mixedbread-ai/mxbai-embed-large-v1')
-print("--- Model pre-loaded successfully ---")
-
-try:
-    TAVILY_CLIENT = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
-except Exception as e:
-    print(f"Warning: Tavily API key not found or invalid. Web search tool may not work. Error: {e}")
-    TAVILY_CLIENT = None
-
-def _extract_json_from_response(response_text: str) -> str:
-    """Finds and extracts the first valid JSON object from a string."""
-    match = re.search(r'```json\s*(\{.*?\})\s*```|(\{.*?\})', response_text, re.DOTALL)
-    if match:
-        return match.group(1) if match.group(1) else match.group(2)
-    return response_text
-
-# --- THIS IS THE UPGRADED "GROUNDED" HELPER FUNCTION ---
-def get_dates_from_query(query: str) -> dict:
+@tool
+def get_performance_data(asins: str) -> str:
     """
-    Uses an LLM to extract a start and end date from a natural language query,
-    grounded by the actual date range in the database.
+    Use this tool to get the performance summary for one or more products after you have their ASINs.
+    The input MUST be a comma-separated string of ASINs (e.g., "B0123ABC,B0456DEF").
     """
-    # 1. Find the actual date range from the database to "ground" the LLM
+    print(f"--- 📊 Performance Data Tool activated for ASINs: {asins} ---")
     try:
+        # Parse the comma-separated string into a list
+        asins_list = [asin.strip() for asin in asins.split(',')]
+        params = {'asins': tuple(asins_list)}
+        
+        sql = text("""
+            SELECT 
+                p.product_name, p.asin, SUM(wp.total_units_sold) as "Total Units Sold",
+                TO_CHAR(AVG(wp.average_selling_price), 'FM999,999.00') as "Average Selling Price",
+                SUM(wp.total_units_conceded) as "Total Units Conceded"
+            FROM weekly_performance wp
+            JOIN products p ON wp.asin = p.asin
+            WHERE wp.asin IN :asins
+            GROUP BY p.product_name, p.asin
+        """)
         with engine.connect() as conn:
-            date_range_query = "SELECT MIN(week_start_date) as min_date, MAX(week_start_date) as max_date FROM weekly_performance;"
-            result = conn.execute(text(date_range_query)).fetchone()
-            min_db_date = result.min_date.strftime('%Y-%m-%d') if result and result.min_date else "2024-09-15"
-            max_db_date = result.max_date.strftime('%Y-%m-%d') if result and result.max_date else "2025-09-15"
-    except Exception as db_exc:
-        print(f"Warning: Could not query DB for date range. Using default dates. Error: {db_exc}")
-        min_db_date, max_db_date = "2024-09-15", "2025-09-15"
-
-    # 2. Use the real date range to create a fact-based prompt
-    date_parser_llm = ChatOpenAI(
-        model="meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
-        api_key=os.environ.get("NOVITA_API_KEY"),
-        base_url=os.environ.get("NOVITA_API_BASE_URL"),
-        temperature=0,
-        model_kwargs={"response_format": {"type": "json_object"}}
-    )
-    
-    prompt = f"""
-    Based on the user's query, extract a start_date and end_date in 'YYYY-MM-DD' format.
-    The data available in the database ranges from {min_db_date} to {max_db_date}.
-    The current date is {max_db_date}.
-
-    RULES:
-    - If the user asks for the "entire duration", "all time", "from the beginning", or "since launch", use the full available date range: start_date should be {min_db_date} and end_date should be {max_db_date}.
-    - If the user asks for a specific period like "last 4 months" or "in June 2025", calculate that based on the current date.
-    - If no date is mentioned, default to the last 3 months.
-
-    Query: "{query}"
-    Respond ONLY with a single, valid JSON object with "start_date" and "end_date" keys.
-    """
-    try:
-        response = date_parser_llm.invoke(prompt)
-        clean_json_str = _extract_json_from_response(response.content)
-        dates = json.loads(clean_json_str)
-        print(f"--- Date Parser LLM extracted: {dates} ---")
-        return dates
+            df = pd.read_sql(sql, conn, params=params)
+        return f"Performance Data:\n{df.to_markdown(index=False)}" if not df.empty else "No performance data found for the given ASINs."
     except Exception as e:
-        print(f"Warning: Date parsing failed. Using full date range as fallback. Error: {e}")
-        return {"start_date": min_db_date, "end_date": max_db_date}
-
+        return f"Database error or invalid input format: {e}"
 
 @tool
-@lru_cache(maxsize=128)
-def review_rag_tool(query: str) -> str:
-    """Finds and returns the most relevant customer reviews for a given query."""
-    print(f"--- RAGAgent: Finding reviews relevant to: '{query}' ---")
-    try:
-        chroma_client = chromadb.HttpClient(host=os.environ.get("CHROMA_HOST"), port=int(os.environ.get("CHROMA_PORT")), settings=Settings(anonymized_telemetry=False))
-        collection = chroma_client.get_collection(name="product_reviews")
-        query_embedding = EMBEDDING_MODEL.encode([query]).tolist()
-        results = collection.query(query_embeddings=query_embedding, n_results=3)
-        if not results or not results.get('documents') or not results['documents'][0]:
-            return "No relevant reviews found in the knowledge base."
-        return "Found relevant reviews:\n- " + "\n- ".join(results['documents'][0])
-    except Exception as e:
-        return f"Error retrieving reviews from knowledge base: {e}"
-
-@tool
-@lru_cache(maxsize=128)
-def financial_data_tool(query: str) -> str:
+def get_concession_insights(asins: str) -> str:
     """
-    Returns weekly performance data for a product within a specified date range.
-    Uses fuzzy matching to find products even with typos.
+    Use this tool to find the top 5 return reasons for one or more products after you have their ASINs.
+    The input MUST be a comma-separated string of ASINs (e.g., "B0123ABC,B0456DEF").
     """
-    print(f"--- PerformanceAgent: Received query: {query} ---")
+    print(f"--- 💬 Concession Insights Tool activated for ASINs: {asins} ---")
     try:
-        products_df = pd.read_sql_query("SELECT asin, product_name FROM products;", engine)
-        product_choices = products_df['product_name'].tolist()
-        if not product_choices:
-            return "Error: No products found in the database. Please run the ingestion script."
-        best_match = process.extractOne(query, product_choices)
-        product_name_found, product_id_found = None, None
+        # Parse the comma-separated string into a list
+        asins_list = [asin.strip() for asin in asins.split(',')]
+        params = {'asins': tuple(asins_list)}
         
-        if best_match and best_match[1] >= 80:
-            product_name_found = best_match[0]
-            product_id_found = products_df[products_df['product_name'] == product_name_found]['asin'].iloc[0]
-        else:
-            return "Sorry, I couldn't find any relevant data on this product from internal sources. I will get some information in general from the LLM database."
-
-        dates = get_dates_from_query(query)
-        start_date, end_date = dates['start_date'], dates['end_date']
-        print(f"--- PerformanceAgent: Matched '{query}' to '{product_name_found}' (ASIN: {product_id_found}), Date Range: {start_date} to {end_date} ---")
-
+        sql = text("""
+            SELECT 
+                concession_reason as "Concession Reason", COUNT(*) as "Count"
+            FROM concessions
+            WHERE asin IN :asins
+            GROUP BY concession_reason
+            ORDER BY "Count" DESC
+            LIMIT 5
+        """)
         with engine.connect() as conn:
-            sql_query = """
-                SELECT week_start_date, total_units_sold, average_selling_price, num_reviews_received, average_rating_new 
-                FROM weekly_performance 
-                WHERE asin = :asin AND week_start_date BETWEEN :start_date AND :end_date
-                ORDER BY week_start_date;
-            """
-            params = {'asin': product_id_found, 'start_date': start_date, 'end_date': end_date}
-            data = pd.read_sql_query(text(sql_query), conn, params=params)
-        
-        if data.empty:
-            return f"No performance data found for {product_name_found} in the specified period ({start_date} to {end_date})."
-        
-        return f"Product Name: {product_name_found}\nPerformance data for {product_id_found} from {start_date} to {end_date}:\n{data.to_markdown(index=False)}"
-
+            df = pd.read_sql(sql, conn, params=params)
+        return f"Top 5 Concession Reasons:\n{df.to_markdown(index=False)}" if not df.empty else "No concession data found for the given ASINs."
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Error fetching performance data: {e}"
-
-@tool
-def plot_sales_trend(query: str) -> str:
-    """Generates a sales trend plot. Uses fuzzy matching to find products."""
-    print(f"--- PlottingAgent: Received query: {query} ---")
-    try:
-        products_df = pd.read_sql_query("SELECT asin, product_name FROM products;", engine)
-        product_choices = products_df['product_name'].tolist()
-        if not product_choices:
-            return "Error: No products found in the database to plot."
-        best_match = process.extractOne(query, product_choices)
-        product_id_found, product_name_found = None, None
-        
-        if best_match and best_match[1] >= 80:
-            product_name_found = best_match[0]
-            product_id_found = products_df[products_df['product_name'] == product_name_found]['asin'].iloc[0]
-        else:
-            return "Sorry, I couldn't find a matching product in the internal database to create a plot."
-            
-        print(f"--- PlottingAgent: Generating sales plot for {product_id_found} ---")
-        dates = get_dates_from_query(query)
-        start_date, end_date = dates['start_date'], dates['end_date']
-        
-        with engine.connect() as conn:
-            sql_query = """
-                SELECT week_start_date, total_units_sold FROM weekly_performance 
-                WHERE asin = :asin AND week_start_date BETWEEN :start_date AND :end_date 
-                ORDER BY week_start_date;
-            """
-            params = {'asin': product_id_found, 'start_date': start_date, 'end_date': end_date}
-            data = pd.read_sql_query(text(sql_query), conn, params=params)
-            
-        if data.empty:
-            return f"No data to plot for {product_id_found} in the period {start_date} to {end_date}."
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(pd.to_datetime(data['week_start_date']), data['total_units_sold'], marker='o')
-        plt.title(f'Sales Trend for {product_name_found}')
-        plt.xlabel('Week')
-        plt.ylabel('Total Units Sold')
-        plt.grid(True)
-        plt.tight_layout()
-        
-        plot_filename = f"{product_id_found}_sales_trend.png"
-        plt.savefig(f"/app/{plot_filename}")
-        
-        return f"Successfully generated and saved plot as {plot_filename} covering the period from {start_date} to {end_date}."
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Error generating plot: {e}"
-
-@tool
-def structured_sentiment_analyzer(review_text: str) -> str:
-    """Analyzes a product review and returns a structured JSON object with sentiment and aspects."""
-    print(f"--- SentimentAgent: Analyzing text: '{review_text[:50]}...' ---")
-    try:
-        llm = ChatOpenAI(
-            model="meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
-            api_key=os.environ.get("NOVITA_API_KEY"),
-            base_url=os.environ.get("NOVITA_API_BASE_URL"),
-            model_kwargs={"response_format": {"type": "json_object"}}
-        )
-        prompt = f"""
-        Analyze the sentiment of the following product review.
-        Return ONLY a single, valid JSON object with two keys:
-        1. "sentiment": a string, which must be one of ["Positive", "Negative", "Neutral"].
-        2. "aspects": a Python list of specific features mentioned.
-        Review: "{review_text}"
-        """
-        response = llm.invoke(prompt)
-        clean_json_str = _extract_json_from_response(response.content)
-        return clean_json_str
-    except Exception as e:
-        return f"Error during sentiment analysis: {e}"
-
-@tool
-def web_search_tool(query: str) -> str:
-    """Performs a general web search and returns snippets from top results."""
-    print(f"--- WebSearchAgent: Searching for: '{query}' ---")
-    if not TAVILY_CLIENT:
-        return "Web search tool is not configured. Please provide a valid TAVILY_API_KEY in .env."
-    try:
-        results = TAVILY_CLIENT.search(query=query, search_depth="basic", max_results=5)
-        if not results or not results['results']:
-            return "No relevant search results found."
-        formatted_results = []
-        for i, res in enumerate(results['results']):
-            content = res.get('content', 'No content available.')
-            if content is None: content = 'No content available.'
-            formatted_results.append(
-                f"Result {i+1}:\n"
-                f"  Title: {res.get('title', 'N/A')}\n"
-                f"  URL: {res.get('url', 'N/A')}\n"
-                f"  Content: {content[:300]}...\n"
-            )
-        return "Found web search results:\n" + "\n".join(formatted_results)
-    except Exception as e:
-        return f"Error during web search: {e}"
-
-@tool
-def browse_website_tool(url: str) -> str:
-    """Reads the content of a webpage at a given URL and returns its title."""
-    print(f"--- WebBrowserAgent: Accessing URL: {url} ---")
-    try:
-        scraper_url = f"http://thesis_scraper:8003/scrape?url={url}"
-        response = requests.get(scraper_url, timeout=15)
-        response.raise_for_status()
-        return f"Successfully read the webpage at {url}. The title is: '{response.json().get('title', 'N/A').strip()}'"
-    except Exception as e:
-        return f"Error accessing website: {e}"
-
-@tool
-def extract_web_data_tool(url_and_selector: str) -> str:
-    """Extracts specific data from a webpage using a CSS selector."""
-    print(f"--- DataExtractionAgent: Attempting to extract from: '{url_and_selector}' ---")
-    try:
-        parts = [p.strip() for p in url_and_selector.split('|')]
-        if len(parts) != 2:
-            return "Invalid input format. Expected 'URL | CSS_SELECTOR'."
-        url, css_selector = parts[0], parts[1]
-        scraper_url = f"http://thesis_scraper:8003/scrape?url={url}&css_selector={requests.utils.quote(css_selector)}"
-        response = requests.get(scraper_url, timeout=15)
-        response.raise_for_status()
-        result_json = response.json()
-        extracted_content = result_json.get('extracted_content', 'No content found.')
-        if extracted_content.startswith("No element found"):
-            return f"No data found at {url} for selector '{css_selector}'. The tool received: {extracted_content}"
-        return f"Successfully extracted from {url} using selector '{css_selector}': {extracted_content}"
-    except Exception as e:
-        return f"Error extracting data: {e}"
+        return f"Database error or invalid input format: {e}"
