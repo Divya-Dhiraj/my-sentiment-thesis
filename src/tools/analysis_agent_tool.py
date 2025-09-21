@@ -13,12 +13,12 @@ class ChartData(BaseModel):
     title: str = Field(description="The title of the chart.")
     x_axis_label: str = Field(description="The label for the X-axis.")
     y_axis_label: str = Field(description="The label for the Y-axis.")
-    data: List[Dict[str, Any]] = Field(description="The data for the chart, typically a list of dictionaries.")
+    data: List[Dict[str, Any]] = Field(description="The data for the chart, typically a list of dictionaries with keys like 'label' and 'value' or 'date' and 'value'.")
 
 class TableData(BaseModel):
     headers: List[str] = Field(description="A list of strings for the table column headers.")
     rows: List[List[Any]] = Field(description="A list of lists, where each inner list represents a row of data.")
-    title: str = Field(description="The title of the table.")
+    title: str = Field(description="A descriptive title for the table.")
 
 class AnalysisReport(BaseModel):
     analysis_summary: str = Field(description="A detailed, narrative summary of the key findings from the data.")
@@ -28,38 +28,43 @@ class AnalysisReport(BaseModel):
     table_data: Optional[TableData] = Field(None, description="Structured data for a summary table, to be used for rankings, lists, or detailed breakdowns.")
     chart_data: Optional[ChartData] = Field(None, description="Structured data to generate a single, compelling chart that visualizes the key findings.")
 
+# --- THIS IS THE FIX ---
+# The tool's input now includes the user's original query for context.
 class DataAnalysisInput(BaseModel):
     """Input model for the Data Analysis tool."""
+    user_query: str = Field(description="The original, natural language query from the user.")
     data: str = Field(description="The consolidated, pre-processed, and summarized data from previous steps that needs to be analyzed.")
 
-@tool
-def data_analysis_tool(tool_input: DataAnalysisInput) -> str:
+@tool(args_schema=DataAnalysisInput)
+def data_analysis_tool(user_query: str, data: str) -> str:
     """
     Use this tool at the very end of a query to perform a detailed, structured analysis on the summarized data.
     It returns a rich JSON object containing a narrative summary, insights, recommendations, and EITHER a table OR a chart when appropriate.
     """
-    data = tool_input.data
     print("--- 🔬 DATA ANALYST AGENT: Performing structured analysis... ---")
     parser = JsonOutputParser(pydantic_object=AnalysisReport)
 
-    # --- UPGRADED PROMPT with DATA PRESENTATION MANDATE ---
     analyst_prompt_template = """
-    You are a world-class, expert financial and business analyst. Your task is to analyze the provided dataset and generate a comprehensive, structured report in JSON format.
+    You are a world-class, expert financial and business analyst. Your task is to analyze the provided dataset in the context of the original user query and generate a comprehensive, structured report in JSON format.
 
-    **Analysis Objective:**
-    1.  Summarize the key findings in a narrative `analysis_summary`.
-    2.  Distill the most critical takeaways into a `key_insights` list.
-    3.  Propose specific `actionable_recommendations`.
-    4.  Identify any `data_quality_concerns`.
-    5.  **Data Presentation Mandate:** Based on the user's query and the data, you MUST decide on the best way to present the core data.
-        - If the query asks for a "list", "ranking", "top N", or a detailed breakdown with multiple columns, you **MUST** populate the `table_data` field. Give it a clear `title`.
-        - If the query asks for a "trend", "comparison between categories", "breakdown by a single dimension", or "share", you **MUST** populate the `chart_data` field. Choose the appropriate chart type (`bar_chart`, `line_chart`).
-        - You should generally provide EITHER a table OR a chart, but not both. Choose the one that communicates the main point most effectively. If no visualization is needed, leave both fields null.
+    **Original User Query:**
+    {user_query}
+    -------------------
 
     **Dataset to Analyze:**
-    -------------------
     {data}
     -------------------
+
+    **Analysis Objective:**
+    1.  Read the user's original query and the accompanying data.
+    2.  Synthesize the information to produce a concise `analysis_summary`.
+    3.  Extract 3-5 `key_insights` that are not immediately obvious from the raw data.
+    4.  Propose 3-5 concrete `actionable_recommendations` based on the insights.
+    5.  List any `data_quality_concerns` you identify. If none, return an empty list.
+    6.  **Data Presentation Mandate:** Based on the user's query and the data, you MUST decide on the best way to present the core data.
+        - If the query asks for a "list", "ranking", "top N", or a detailed breakdown, you **MUST** populate the `table_data` field.
+        - If the query asks for a "trend", "comparison", "breakdown by", or "share", you **MUST** populate the `chart_data` field.
+        - You should generally provide EITHER a table OR a chart, not both. Choose the one that communicates the main point most effectively. If no visualization is needed, leave both fields null.
 
     **JSON Output Format Instructions:**
     {format_instructions}
@@ -77,10 +82,13 @@ def data_analysis_tool(tool_input: DataAnalysisInput) -> str:
     analysis_chain = prompt | llm | parser
     
     print("--- [Analysis Tool] Invoking analysis chain... ---")
-    response_dict = analysis_chain.invoke({"data": data})
+    response_dict = analysis_chain.invoke({"data": data, "user_query": user_query})
     
-    print(f"--- [Analysis Tool] Generated raw analysis object: ---\n{json.dumps(response_dict, indent=2)}")
-
+    print(f"--- [Analysis Tool] Generated raw analysis object: ---")
+    
+    # Pretty-print the JSON for easier debugging in the logs
     response_json_string = json.dumps(response_dict, indent=2)
+    print(response_json_string)
+
     print("--- ✅ DATA ANALYST AGENT: Structured analysis complete. ---")
     return response_json_string
