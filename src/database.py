@@ -18,28 +18,24 @@ def get_db_engine():
 
     return create_engine(sqlalchemy_url)
 
-# Create a single, reusable engine for the application
 engine = get_db_engine()
 
 def create_tables():
     """
-    Drops existing tables in the correct dependency order (children first),
-    then recreates them with the complete, final schema. This ensures a clean
-    slate for every data ingestion run.
+    Drops existing tables and recreates them with the final, ENRICHED schema.
+    This prepares the database to receive all the newly generated columns.
     """
-    print("Ensuring a fresh database with the complete schema...")
+    print("Ensuring a fresh database with the complete enriched schema...")
     try:
         with engine.connect() as conn:
-            # Drop tables in reverse order of dependency to avoid foreign key errors
             print("  - Dropping existing tables (if they exist)...")
             conn.execute(text("DROP TABLE IF EXISTS weekly_performance CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS concessions CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS products CASCADE;"))
 
-            # Create tables with the full, comprehensive schema
-            print("  - Creating new tables...")
-
-            # 1. Products table (no dependencies)
+            print("  - Creating new tables with enriched columns...")
+            
+            # 1. Products table with all enriched fields
             conn.execute(text("""
                 CREATE TABLE products (
                     asin VARCHAR(255) PRIMARY KEY,
@@ -49,49 +45,39 @@ def create_tables():
                     manufacturer_name VARCHAR(255),
                     subcategory_code VARCHAR(255),
                     subcategory_description TEXT,
-                    gl_product_group VARCHAR(255),
-                    asp_band VARCHAR(50)
+                    asp_band VARCHAR(50),
+                    "PurchaseIntent" VARCHAR(255),
+                    "MarketSegment" VARCHAR(255),
+                    "PredictedDiscountImpact" VARCHAR(50)
                 );
             """))
 
-            # 2. Concessions table (depends on products)
+            # 2. Concessions table with all enriched fields
             conn.execute(text("""
                 CREATE TABLE concessions (
                     id SERIAL PRIMARY KEY,
                     asin VARCHAR(255) REFERENCES products(asin),
                     customer_id VARCHAR(255),
-                    fulfillment_channel VARCHAR(50),
                     concession_creation_day DATE,
                     concession_reason TEXT,
-                    defect_category TEXT,
-                    root_cause TEXT,
-                    total_units_conceded INTEGER,
-                    our_price NUMERIC(10, 2),
-                    marketplace_id INTEGER
+                    "Sentiment" VARCHAR(50),
+                    "ReturnTheme" VARCHAR(255),
+                    "SuggestedAction" TEXT
                 );
             """))
 
-            # 3. Weekly Performance table (depends on products)
+            # 3. Weekly Performance table (schema is stable)
             conn.execute(text("""
                 CREATE TABLE weekly_performance (
                     id SERIAL PRIMARY KEY,
                     week_start_date DATE,
                     asin VARCHAR(255) REFERENCES products(asin),
-                    total_units_sold INTEGER,
-                    product_gms NUMERIC(12, 2),
-                    shipped_cogs NUMERIC(12, 2),
-                    UNIQUE(week_start_date, asin)
+                    total_units_sold INTEGER
                 );
             """))
             
-            # Create Indexes for faster queries
-            print("  - Creating indexes for faster queries...")
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_perf_asin_week ON weekly_performance (asin, week_start_date);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_concessions_asin ON concessions (asin);"))
-            
             conn.commit()
-            print("✅ Tables and indexes created successfully.")
+            print("✅ Enriched tables and constraints created successfully.")
 
     except Exception as e:
         print(f"❌ An error occurred during table creation: {e}")
