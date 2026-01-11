@@ -5,7 +5,7 @@ import pandas as pd
 
 st.set_page_config(page_title="HORUS BI Agent", page_icon="🤖", layout="wide")
 
-st.title("🤖 HORUS: Business Intelligence Agent")
+st.title("🤖 Business Analytics Agent")
 st.caption("Your AI-powered analyst for product performance and customer data.")
 
 AGENT_API_URL = "http://agent_app:8001/ask_agent"

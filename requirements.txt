@@ -1,35 +1,29 @@
-# requirements.txt
-
 # --- Core & API ---
 fastapi
 uvicorn
 python-dotenv
 typer
 
-# --- LangChain Stack ---
-langchain
-langchain-community
-langchain-openai
-openai
+# --- LangChain Stack (Pinned to stable 0.3.x) ---
+langchain>=0.3.0,<0.4.0
+langchain-community>=0.3.0,<0.4.0
+langchain-openai>=0.2.0,<0.3.0
+langchainhub>=0.1.15
+openai>=1.0.0
 tavily-python
 
 # --- Data & DB ---
 pandas
-SQLAlchemy
+SQLAlchemy>=2.0.0
 psycopg2-binary
 pgvector
 chromadb
 
-# --- AI & ML ---
+# --- AI & UI ---
 sentence-transformers
 thefuzz[speedup]
-
-# --- Web Scraping ---
-requests
-beautifulsoup4
-
-# --- Visualization ---
 matplotlib
+seaborn
 tabulate
 
 # --- Evaluation ---
